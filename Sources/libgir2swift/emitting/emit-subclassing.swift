@@ -149,22 +149,22 @@ private func renderPlain(_ method: GIR.Method) -> RenderableVFunc? {
 private func renderAsyncPair(async: GIR.Method, finish: GIR.Method, base: String) -> RenderableVFunc? {
     if finish.args.filter({ !$0.instance }).count > 1 { return nil }
     var returnType = ""
-    if !finish.returns.isVoid {
+    if !finish.returns.isVoid && !reportsSuccess(finish) {
         if finish.returns.isArray || finish.returns.knownType is GIR.Callback { return nil }
         guard let r = renderableType(finish.returns.typeRef) else { return nil }
         returnType = r
     }
-    // Only pointer-returning or void async methods are folded; the GTask result
-    // bridge below handles exactly those.
+    // Only pointer-returning, success-reporting or void async methods are folded;
+    // the GTask result bridge below handles exactly those.
     let isPointer = returnType.contains("Unsafe") || returnType.contains("OpaquePointer")
-    guard finish.returns.isVoid || isPointer else { return nil }
+    guard returnType.isEmpty || isPointer else { return nil }
 
     var params: [(String, String)] = []
     var asyncCParams: [(String, String)] = []
     for arg in async.args where !arg.instance {
         let ctype = arg.typeRef.type.ctype
         if ctype.contains("GAsyncReadyCallback") || ctype == "gpointer" { continue }
-        guard arg.direction == .in, !arg.isArray, !arg.varargs else { return nil }
+        guard arg.direction == .in, !arg.isArray, !arg.varargs, !(arg.knownType is GIR.Callback) else { return nil }
         let type = cOptional(arg.typeRef.fullUnderlyingCName)
         guard !type.isEmpty else { return nil }
         params.append((arg.name.snakeCase2camelCase, type))
@@ -174,6 +174,10 @@ private func renderAsyncPair(async: GIR.Method, finish: GIR.Method, base: String
                            params: params, returnType: returnType, isAsync: true,
                            asyncThrows: finish.throwsError, asyncField: async.name,
                            finishField: finish.name, asyncCParams: asyncCParams)
+}
+
+private func reportsSuccess(_ finish: GIR.Method) -> Bool {
+    finish.throwsError && finish.returns.typeRef.type.ctype == "gboolean"
 }
 
 // MARK: - Overridable Swift methods
