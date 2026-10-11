@@ -29,7 +29,9 @@ func signalSanityCheck(_ signal: GIR.Signal) -> [String] {
         errors.append("(5)  Alias argument or return is not yet supported")
     }
 
-    if signal.returns.isOptional {
+    let returnsObject = signal.returns.isGObject
+
+    if signal.returns.isOptional && !returnsObject {
         errors.append("(6)  optional argument or return type is not allowed")
     }
 
@@ -37,11 +39,11 @@ func signalSanityCheck(_ signal: GIR.Signal) -> [String] {
         errors.append("(7)  array argument or return type is not allowed")
     }
 
-    if signal.returns.isNullable == true {
+    if signal.returns.isNullable && !returnsObject {
         errors.append("(8)  nullable argument or return type is not allowed")
     }
 
-    if signal.returns.knownType is GIR.Record {
+    if signal.returns.knownType is GIR.Record && !returnsObject {
         errors.append("(9)  Record return type is not yet supported")
     }
 
@@ -267,6 +269,8 @@ private func generateCCallbackCall(record: GIR.Record, signal: GIR.Signal) -> St
 /// Generates correct return statement. This method currently contains implementation of ownership-transfer ability for String.
 private func generateReturnStatement(record: GIR.Record, signal: GIR.Signal) -> String {
     switch signal.returns.knownType {
+    case is GIR.Record where signal.returns.isGObject:
+        return objectReturnStatement(signal.returns)
     case is GIR.Record:
         return "return \(signal.returns.typeRef.cast(expression: "output", from: signal.returns.swiftSignalRef))"
     case is GIR.Alias: // use containedTypes
@@ -287,7 +291,27 @@ private func generateReturnStatement(record: GIR.Record, signal: GIR.Signal) -> 
     }
 }
 
+private func objectReturnStatement(_ returns: GIR.Argument) -> String {
+    let isOptional = returns.isNullable || returns.isOptional
+    switch (isOptional, returns.ownershipTransfer == .full) {
+    case (true, true):
+        return "return output.flatMap { g_object_ref($0.ptr) }"
+    case (true, false):
+        return "return output?.ptr"
+    case (false, true):
+        return "return g_object_ref(output.ptr)"
+    case (false, false):
+        return "return output.ptr"
+    }
+}
+
 private extension GIR.Argument {
+
+    var isGObject: Bool {
+        if knownType is GIR.Interface { return true }
+        guard let type = knownType as? GIR.Class else { return false }
+        return type.rootType.name == "Object"
+    }
     
     /// Returns type names for Swift adjusted for the needs of signal generation
     func swiftIdiomaticType() -> String {
