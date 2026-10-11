@@ -586,7 +586,7 @@ func typeReference(original: GIRType, named identifier: String? = nil, for name:
 ///   - isOptional: `true` if the reference is an optional
 /// - Returns: A type reference
 @usableFromInline
-func genericReference(named identifier: String? = nil, for name: String, containedTypeName: String, in namespace: String? = nil, containedNamespace: String? = nil, swiftName: String? = nil, typeName: String? = nil, cType: String, isOptional: Bool? = nil) -> TypeReference {
+func genericReference(named identifier: String? = nil, for name: String, containedTypeName: String, in namespace: String? = nil, containedNamespace: String? = nil, swiftName: String? = nil, typeName: String? = nil, cType: String, isOptional: Bool? = nil, isOwning: Bool = false) -> TypeReference {
     let suffix = name.last
     let pureTypeName: Substring
     let optionalSuffix: String
@@ -597,7 +597,7 @@ func genericReference(named identifier: String? = nil, for name: String, contain
         pureTypeName = name[...]
         optionalSuffix = ""
     }
-    let refName = String(pureTypeName.hasSuffix("Ref") ? pureTypeName : (pureTypeName + "Ref"))
+    let refName = String(isOwning || pureTypeName.hasSuffix("Ref") ? pureTypeName : (pureTypeName + "Ref"))
     let prefixedName = namespace.map { $0 + "." + refName } ?? refName
     let info = decodeIndirection(for: cType)
     let inner = "<" + containedTypeName + ">"

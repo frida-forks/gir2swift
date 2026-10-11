@@ -284,7 +284,12 @@ public extension GIR.CType {
             let knownRef = useStruct ? knownRecord.structRef : (beingIdiomatic ? knownRecord.classRef : knownRecord.typeRef)
             let unwrappedName = knownRef.forceUnwrappedName
             let unprefixedName: String
-            if !isInstanceOf(record),
+            if !isInstanceOf(record), let argument = self as? GIR.Argument,
+               let owned = ownedCollection(for: prefixedTypeName, containedTypes: containedTypes, unwrappedName: unwrappedName,
+                                           typeRef: knownRef, transfer: argument.ownershipTransfer) {
+                unprefixedName = owned.typeRef.type.name
+                name = owned.typeRef.type.swiftName
+            } else if !isInstanceOf(record),
                let typedColl = typedCollection(for: prefixedTypeName, containedTypes: containedTypes, unwrappedName: unwrappedName, typeRef: knownRef) {
                 unprefixedName = typedColl.type.name
                 name = typedColl.type.swiftName

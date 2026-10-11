@@ -1173,6 +1173,7 @@ public func functionCallCode(_ indentation: String, _ record: GIR.Record? = nil,
         }
         let rvRef: TypeReference
         let rvSwiftRef: TypeReference
+        var ownedResult: OwnedCollection? = nil
         if rv.typeRef.indirectionLevel == 0 && (rv.isKnownEnum || rv.isKnownBitfield) {
             rvRef = rv.underlyingCRef
             rvSwiftRef = rv.typeRef
@@ -1182,6 +1183,11 @@ public func functionCallCode(_ indentation: String, _ record: GIR.Record? = nil,
                 rvSwiftRef = rvRef
             } else if useRef {
                 if !rv.isInstanceOf(constructedRecord),
+                   let owned = ownedCollection(for: rvRef.type.prefixedName, containedTypes: rv.containedTypes,
+                                               unwrappedName: rvRef.type.swiftName, typeRef: rvRef, transfer: rv.ownershipTransfer) {
+                    rvSwiftRef = owned.typeRef
+                    ownedResult = owned
+                } else if !rv.isInstanceOf(constructedRecord),
                    let typedColl = typedCollection(
                     for: rvRef.type.prefixedName,
                     containedTypes: rv.containedTypes,
@@ -1198,7 +1204,7 @@ public func functionCallCode(_ indentation: String, _ record: GIR.Record? = nil,
         }
         let invocationStart = method.cname.swift + "(\(args.map(toSwift).joined(separator: ", "))"
         let invocation = invocationStart + invocationTail
-        let castCode = rvSwiftRef.cast(expression: isVoid ? invocation : "result", from: rvRef)
+        let castCode = ownedResult?.cast(expression: "result") ?? rvSwiftRef.cast(expression: isVoid ? invocation : "result", from: rvRef)
         let rvTypeName = isConstructor || !useRef ? "" : rv.prefixedIdiomaticWrappedTypeName
         let returnVariableEquals: String
         let invocationResultCode: String
@@ -1245,6 +1251,48 @@ public func typedCollection(for prefixedTypeName: String, containedTypes: [GIR.C
     return nil
 }
 
+
+public struct OwnedCollection {
+    public let typeRef: TypeReference
+    public let releaseFunction: String?
+
+    public func cast(expression e: String) -> String {
+        let release = releaseFunction.map { ", releasingElementsWith: " + $0 } ?? ""
+        return e + ".map({ " + typeRef.type.swiftName + "(owning: UnsafeMutableRawPointer($0)" + release + ") })"
+    }
+}
+
+public func ownedCollection(for prefixedTypeName: String, containedTypes: [GIR.CType], unwrappedName: String, typeRef: TypeReference,
+                            transfer: GIR.OwnershipTransfer) -> OwnedCollection? {
+    guard transfer != .none, GIR.typedCollections.contains(prefixedTypeName), !unwrappedName.hasPrefix("PtrArray"),
+          let containedType = containedTypes.first else { return nil }
+    let bareName = unwrappedName.trimmingCharacters(in: CharacterSet(charactersIn: "!?"))
+    let name = bareName.stringByRemoving(suffix: "Ref") ?? bareName
+    if containedType.isGPointer {
+        guard transfer == .container else { return nil }
+        let ref = genericReference(for: "Reference" + name, containedTypeName: containedType.name, in: typeRef.namespace,
+                                   containedNamespace: typeRef.namespace, cType: GIR.gpointer, isOptional: typeRef.isOptional, isOwning: true)
+        return OwnedCollection(typeRef: ref, releaseFunction: nil)
+    }
+    guard let containedRecord = containedType.knownNameRecord else { return nil }
+    let releaseFunction: String?
+    switch transfer {
+    case .full:
+        guard containedRecord.isGObject else { return nil }
+        releaseFunction = "g_object_unref"
+    default:
+        releaseFunction = nil
+    }
+    let ref = genericReference(for: "Ref" + name, containedTypeName: containedRecord.structName, in: "GLib",
+                               containedNamespace: typeRef.namespace, cType: GIR.gpointer, isOptional: typeRef.isOptional, isOwning: true)
+    return OwnedCollection(typeRef: ref, releaseFunction: releaseFunction)
+}
+
+private extension GIR.Record {
+    var isGObject: Bool {
+        self is GIR.Interface || (self is GIR.Class && rootType.name == "Object")
+    }
+}
 
 /// Swift code for calling the underlying setter function and assigning the raw return value
 public func callSetter(_ indentation: String, _ record: GIR.Record? = nil, ptr ptrName: String = "ptr", propertySource: TypeReference? = nil, propertyIdiomaticType: String? = nil) -> (GIR.Method) -> String {
